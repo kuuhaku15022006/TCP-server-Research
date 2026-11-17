@@ -1,4 +1,4 @@
-﻿// TCP Echo Server, mo hinh: BLOCKING socket + THREAD POOL
+﻿// server.cpp - TCP Echo Server, mo hinh: BLOCKING socket + THREAD POOL
 #include <atomic>
 #include <condition_variable>
 #include <csignal>
@@ -18,9 +18,9 @@
 struct Config {
     std::string ip = "0.0.0.0";
     uint16_t port = 9000;
-    int threads = 128;                         // kich thuoc thread pool
+    int threads = 128;
     uint32_t max_payload = proto::DEFAULT_MAX_PAYLOAD;
-    int idle_timeout_s = 30;                   // Client im lang qua lau -> dong
+    int idle_timeout_s = 30;
     bool verbose = false;
 };
 
@@ -35,49 +35,44 @@ static void on_signal(int) { g_stop = true; }
 static std::mutex g_log_mu;
 #define LOG(...) do { std::lock_guard<std::mutex> lk(g_log_mu); std::fprintf(stderr, __VA_ARGS__); std::fputc('\n', stderr); } while (0)
 
-// Phuc vu mot ket noi cho toi khi ket thuc. Loi cua ket noi nay KHONG anh huong Server.
+// Doc header 4 byte va giai ma length bang proto::get_u32
+static net::IoResult read_frame_length(socket_t s, uint8_t hdr[proto::LENGTH_FIELD_SIZE], uint32_t& out_len) {
+    net::IoResult r = net::recv_all(s, hdr, proto::LENGTH_FIELD_SIZE);
+    if (r == net::IoResult::Ok) {
+        out_len = proto::get_u32(hdr);
+    }
+    return r;
+}
+
 static void handle_client(socket_t s, const Config& cfg, Stats& st) {
     net::set_nodelay(s);
     net::set_recv_timeout(s, cfg.idle_timeout_s * 1000);
 
     std::vector<uint8_t> frame;
     for (;;) {
-        // 1) Doc du 4 byte length
         uint8_t hdr[proto::LENGTH_FIELD_SIZE];
-        net::IoResult r = net::recv_all(s, hdr, sizeof(hdr));
+        uint32_t len = 0;
+        net::IoResult r = read_frame_length(s, hdr, len);
         if (r != net::IoResult::Ok) {
             if (r == net::IoResult::Closed) st.closed_by_client++;
-            else if (r == net::IoResult::Timeout) { st.timeouts++; if (cfg.verbose) LOG("idle timeout"); }
+            else if (r == net::IoResult::Timeout) st.timeouts++;
             else st.io_errors++;
             break;
         }
 
-        uint32_t len = proto::get_u32(hdr);
-
-        // 2) Kiem tra hop le TRUOC khi cap phat bo nho (chong length gia cuc lon)
         if (len < proto::REQUEST_ID_SIZE || len - proto::REQUEST_ID_SIZE > cfg.max_payload) {
             st.invalid++;
-            LOG("invalid frame: length=%u (max payload %u) -> close", len, cfg.max_payload);
             break;
         }
 
-        // 3) Doc phan con lai (requestId + payload)
         frame.resize(proto::LENGTH_FIELD_SIZE + len);
         std::memcpy(frame.data(), hdr, sizeof(hdr));
         r = net::recv_all(s, frame.data() + proto::LENGTH_FIELD_SIZE, len);
         if (r != net::IoResult::Ok) {
-            // Client ngat dot ngot giua chung mot message hoac timeout
-            if (r == net::IoResult::Timeout) {
-                st.timeouts++;
-                LOG("timeout while reading frame body (expected %u bytes) -> close", len);
-            } else {
-                st.io_errors++;
-                LOG("abnormal disconnect mid-frame (expected %u bytes) -> close", len);
-            }
+            st.io_errors++;
             break;
         }
 
-        // 4) Echo nguyen frame
         if (net::send_all(s, frame.data(), frame.size()) != net::IoResult::Ok) {
             st.io_errors++;
             break;
@@ -88,7 +83,6 @@ static void handle_client(socket_t s, const Config& cfg, Stats& st) {
     net::close_socket(s);
 }
 
-// Hang doi socket cho thread pool
 class SocketQueue {
 public:
     void push(socket_t s) {
@@ -113,7 +107,6 @@ public:
         }
         cv_.notify_all();
     }
-    size_t size() { std::lock_guard<std::mutex> lk(mu_); return q_.size(); }
 private:
     std::mutex mu_;
     std::condition_variable cv_;
@@ -132,11 +125,7 @@ static bool parse_args(int argc, char** argv, Config& c) {
         else if (a == "--max-payload" && (v = next())) c.max_payload = static_cast<uint32_t>(std::atoi(v));
         else if (a == "--idle-timeout" && (v = next())) c.idle_timeout_s = std::atoi(v);
         else if (a == "--verbose") c.verbose = true;
-        else {
-            std::cerr << "Usage: server [--ip IP] [--port N] [--threads N] [--max-payload BYTES]"
-                         " [--idle-timeout SEC] [--verbose]\n";
-            return false;
-        }
+        else return false;
     }
     return c.threads > 0 && c.port > 0;
 }
@@ -144,7 +133,7 @@ static bool parse_args(int argc, char** argv, Config& c) {
 int main(int argc, char** argv) {
     Config cfg;
     if (!parse_args(argc, argv, cfg)) return 1;
-    if (!net::init()) { std::cerr << "Winsock init failed\n"; return 1; }
+    if (!net::init()) return 1;
 
     std::signal(SIGINT, on_signal);
     std::signal(SIGTERM, on_signal);
@@ -153,21 +142,18 @@ int main(int argc, char** argv) {
 #endif
 
     socket_t ls = ::socket(AF_INET, SOCK_STREAM, 0);
-    if (ls == INVALID_SOCK) { std::perror("socket"); return 1; }
+    if (ls == INVALID_SOCK) return 1;
     int one = 1;
     setsockopt(ls, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&one), sizeof(one));
 
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_port = htons(cfg.port);
-    if (inet_pton(AF_INET, cfg.ip.c_str(), &addr.sin_addr) != 1) {
-        std::cerr << "Invalid IP: " << cfg.ip << "\n"; return 1;
-    }
-    if (::bind(ls, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) { std::perror("bind"); return 1; }
-    if (::listen(ls, SOMAXCONN) != 0) { std::perror("listen"); return 1; }
+    if (inet_pton(AF_INET, cfg.ip.c_str(), &addr.sin_addr) != 1) return 1;
+    if (::bind(ls, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) return 1;
+    if (::listen(ls, SOMAXCONN) != 0) return 1;
 
-    LOG("Echo server listening on %s:%u | model=thread-pool(blocking) threads=%d max_payload=%u idle_timeout=%ds",
-        cfg.ip.c_str(), cfg.port, cfg.threads, cfg.max_payload, cfg.idle_timeout_s);
+    LOG("Echo server listening on %s:%u | threads=%d", cfg.ip.c_str(), cfg.port, cfg.threads);
 
     Stats st;
     SocketQueue q;
@@ -183,7 +169,6 @@ int main(int argc, char** argv) {
         });
     }
 
-    // Vong accept: dung select() timeout 500ms de kiem tra co dung (Ctrl+C)
     while (!g_stop) {
         fd_set rfds;
         FD_ZERO(&rfds);
@@ -200,29 +185,13 @@ int main(int argc, char** argv) {
         socklen_t plen = sizeof(peer);
         socket_t cs = ::accept(ls, reinterpret_cast<sockaddr*>(&peer), &plen);
         if (cs == INVALID_SOCK) continue;
-
         st.accepted++;
-        if (cfg.verbose) {
-            char ipbuf[INET_ADDRSTRLEN];
-            inet_ntop(AF_INET, &peer.sin_addr, ipbuf, sizeof(ipbuf));
-            LOG("accepted %s:%u", ipbuf, ntohs(peer.sin_port));
-        }
-        if (st.active.load() >= static_cast<uint64_t>(cfg.threads))
-            LOG("WARNING: all %d workers busy, new connection must wait (raise --threads)", cfg.threads);
         q.push(cs);
     }
 
-    LOG("Shutting down...");
     net::close_socket(ls);
     q.stop();
     for (auto& t : pool) t.join();
-
-    LOG("---- Summary ----");
-    LOG("accepted=%llu requests=%llu bytes_in=%llu", (unsigned long long)st.accepted, (unsigned long long)st.requests,
-        (unsigned long long)st.bytes_in);
-    LOG("closed_by_client=%llu timeouts=%llu invalid_frames=%llu io_errors=%llu",
-        (unsigned long long)st.closed_by_client, (unsigned long long)st.timeouts,
-        (unsigned long long)st.invalid, (unsigned long long)st.io_errors);
     net::cleanup();
     return 0;
 }
