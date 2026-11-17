@@ -1,13 +1,4 @@
-// server.cpp - TCP Echo Server, mô hình: BLOCKING socket + THREAD POOL
-//
-// Mô hình xử lý:
-//   - 1 thread chính: accept() kết nối mới, đẩy socket vào hàng đợi.
-//   - N worker thread (thread pool cố định): mỗi worker lấy 1 socket từ hàng đợi và
-//     phục vụ KẾT NỐI ĐÓ cho tới khi Client đóng / lỗi / timeout (blocking I/O).
-//   => Số Client đồng thời được phục vụ song song tối đa = số worker (--threads).
-//      Client vượt quá số worker phải chờ trong hàng đợi, nên --threads phải >= số Client test.
-//
-// Chạy:  ./server --ip 0.0.0.0 --port 9000 --threads 128 --max-payload 65536 --idle-timeout 30
+﻿// TCP Echo Server, mo hinh: BLOCKING socket + THREAD POOL
 #include <atomic>
 #include <condition_variable>
 #include <csignal>
@@ -21,15 +12,15 @@
 #include <thread>
 #include <vector>
 
-#include "net.hpp"
-#include "protocol.hpp"
+#include "net.h"
+#include "protocol.h"
 
 struct Config {
     std::string ip = "0.0.0.0";
     uint16_t port = 9000;
-    int threads = 128;                         // kích thước thread pool
+    int threads = 128;                         // kich thuoc thread pool
     uint32_t max_payload = proto::DEFAULT_MAX_PAYLOAD;
-    int idle_timeout_s = 30;                   // Client im lặng quá lâu -> đóng
+    int idle_timeout_s = 30;                   // Client im lang qua lau -> dong
     bool verbose = false;
 };
 
@@ -44,14 +35,14 @@ static void on_signal(int) { g_stop = true; }
 static std::mutex g_log_mu;
 #define LOG(...) do { std::lock_guard<std::mutex> lk(g_log_mu); std::fprintf(stderr, __VA_ARGS__); std::fputc('\n', stderr); } while (0)
 
-// Phục vụ một kết nối cho tới khi kết thúc. Lỗi của kết nối này KHÔNG ảnh hưởng Server.
+// Phuc vu mot ket noi cho toi khi ket thuc. Loi cua ket noi nay KHONG anh huong Server.
 static void handle_client(socket_t s, const Config& cfg, Stats& st) {
     net::set_nodelay(s);
     net::set_recv_timeout(s, cfg.idle_timeout_s * 1000);
 
     std::vector<uint8_t> frame;
     for (;;) {
-        // 1) Đọc đủ 4 byte length
+        // 1) Doc du 4 byte length
         uint8_t hdr[proto::LENGTH_FIELD_SIZE];
         net::IoResult r = net::recv_all(s, hdr, sizeof(hdr));
         if (r != net::IoResult::Ok) {
@@ -61,30 +52,32 @@ static void handle_client(socket_t s, const Config& cfg, Stats& st) {
             break;
         }
 
-        uint32_t len;
-        std::memcpy(&len, hdr, sizeof(len));
-        len = ntohl(len);
+        uint32_t len = proto::get_u32(hdr);
 
-        // 2) Kiểm tra hợp lệ TRƯỚC khi cấp phát bộ nhớ (chống length giả cực lớn)
+        // 2) Kiem tra hop le TRUOC khi cap phat bo nho (chong length gia cuc lon)
         if (len < proto::REQUEST_ID_SIZE || len - proto::REQUEST_ID_SIZE > cfg.max_payload) {
             st.invalid++;
             LOG("invalid frame: length=%u (max payload %u) -> close", len, cfg.max_payload);
             break;
         }
 
-        // 3) Đọc phần còn lại (requestId + payload)
+        // 3) Doc phan con lai (requestId + payload)
         frame.resize(proto::LENGTH_FIELD_SIZE + len);
         std::memcpy(frame.data(), hdr, sizeof(hdr));
         r = net::recv_all(s, frame.data() + proto::LENGTH_FIELD_SIZE, len);
         if (r != net::IoResult::Ok) {
-            // Client ngắt giữa chừng một message hoặc timeout
-            if (r == net::IoResult::Timeout) st.timeouts++;
-            else if (r == net::IoResult::Closed) st.closed_by_client++;
-            else st.io_errors++;
+            // Client ngat dot ngot giua chung mot message hoac timeout
+            if (r == net::IoResult::Timeout) {
+                st.timeouts++;
+                LOG("timeout while reading frame body (expected %u bytes) -> close", len);
+            } else {
+                st.io_errors++;
+                LOG("abnormal disconnect mid-frame (expected %u bytes) -> close", len);
+            }
             break;
         }
 
-        // 4) Echo nguyên frame
+        // 4) Echo nguyen frame
         if (net::send_all(s, frame.data(), frame.size()) != net::IoResult::Ok) {
             st.io_errors++;
             break;
@@ -95,14 +88,13 @@ static void handle_client(socket_t s, const Config& cfg, Stats& st) {
     net::close_socket(s);
 }
 
-// Hàng đợi socket cho thread pool
+// Hang doi socket cho thread pool
 class SocketQueue {
 public:
     void push(socket_t s) {
         { std::lock_guard<std::mutex> lk(mu_); q_.push(s); }
         cv_.notify_one();
     }
-    // Trả false khi đã stop và hết việc
     bool pop(socket_t& out) {
         std::unique_lock<std::mutex> lk(mu_);
         cv_.wait(lk, [&] { return stopped_ || !q_.empty(); });
@@ -110,7 +102,17 @@ public:
         out = q_.front(); q_.pop();
         return true;
     }
-    void stop() { { std::lock_guard<std::mutex> lk(mu_); stopped_ = true; } cv_.notify_all(); }
+    void stop() {
+        {
+            std::lock_guard<std::mutex> lk(mu_);
+            stopped_ = true;
+            while (!q_.empty()) {
+                net::close_socket(q_.front());
+                q_.pop();
+            }
+        }
+        cv_.notify_all();
+    }
     size_t size() { std::lock_guard<std::mutex> lk(mu_); return q_.size(); }
 private:
     std::mutex mu_;
@@ -181,7 +183,7 @@ int main(int argc, char** argv) {
         });
     }
 
-    // Vòng accept: dùng select() timeout 500ms để kiểm tra cờ dừng (Ctrl+C)
+    // Vong accept: dung select() timeout 500ms de kiem tra co dung (Ctrl+C)
     while (!g_stop) {
         fd_set rfds;
         FD_ZERO(&rfds);
@@ -213,7 +215,6 @@ int main(int argc, char** argv) {
     LOG("Shutting down...");
     net::close_socket(ls);
     q.stop();
-    // Đóng các socket còn chờ trong hàng đợi (nếu có) rồi chờ worker xong
     for (auto& t : pool) t.join();
 
     LOG("---- Summary ----");
