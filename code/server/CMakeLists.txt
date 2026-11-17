@@ -1,0 +1,6 @@
+add_executable(server server.cpp)
+target_include_directories(server PRIVATE ${CMAKE_SOURCE_DIR}/src/common)
+target_link_libraries(server Threads::Threads)
+if(WIN32)
+  target_link_libraries(server ws2_32)
+endif()
