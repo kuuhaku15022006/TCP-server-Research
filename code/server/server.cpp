@@ -35,13 +35,25 @@ static void on_signal(int) { g_stop = true; }
 static std::mutex g_log_mu;
 #define LOG(...) do { std::lock_guard<std::mutex> lk(g_log_mu); std::fprintf(stderr, __VA_ARGS__); std::fputc('\n', stderr); } while (0)
 
-// Doc header 4 byte va giai ma length bang proto::get_u32
 static net::IoResult read_frame_length(socket_t s, uint8_t hdr[proto::LENGTH_FIELD_SIZE], uint32_t& out_len) {
     net::IoResult r = net::recv_all(s, hdr, proto::LENGTH_FIELD_SIZE);
     if (r == net::IoResult::Ok) {
         out_len = proto::get_u32(hdr);
     }
     return r;
+}
+
+// Kiem tra gioi han length va max_payload truoc khi cap phat bo nho
+static bool validate_frame_length(uint32_t len, uint32_t max_payload) {
+    if (len < proto::REQUEST_ID_SIZE) {
+        LOG("invalid frame: length=%u < header requestId size (%u) -> close", len, proto::REQUEST_ID_SIZE);
+        return false;
+    }
+    if (len - proto::REQUEST_ID_SIZE > max_payload) {
+        LOG("invalid frame: payload=%u exceeds max_payload=%u -> close", len - proto::REQUEST_ID_SIZE, max_payload);
+        return false;
+    }
+    return true;
 }
 
 static void handle_client(socket_t s, const Config& cfg, Stats& st) {
@@ -60,7 +72,7 @@ static void handle_client(socket_t s, const Config& cfg, Stats& st) {
             break;
         }
 
-        if (len < proto::REQUEST_ID_SIZE || len - proto::REQUEST_ID_SIZE > cfg.max_payload) {
+        if (!validate_frame_length(len, cfg.max_payload)) {
             st.invalid++;
             break;
         }
@@ -153,7 +165,7 @@ int main(int argc, char** argv) {
     if (::bind(ls, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) return 1;
     if (::listen(ls, SOMAXCONN) != 0) return 1;
 
-    LOG("Echo server listening on %s:%u | threads=%d", cfg.ip.c_str(), cfg.port, cfg.threads);
+    LOG("Echo server listening on %s:%u | threads=%d max_payload=%u", cfg.ip.c_str(), cfg.port, cfg.threads, cfg.max_payload);
 
     Stats st;
     SocketQueue q;
