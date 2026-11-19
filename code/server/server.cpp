@@ -43,7 +43,6 @@ static net::IoResult read_frame_length(socket_t s, uint8_t hdr[proto::LENGTH_FIE
     return r;
 }
 
-// Kiem tra gioi han length va max_payload truoc khi cap phat bo nho
 static bool validate_frame_length(uint32_t len, uint32_t max_payload) {
     if (len < proto::REQUEST_ID_SIZE) {
         LOG("invalid frame: length=%u < header requestId size (%u) -> close", len, proto::REQUEST_ID_SIZE);
@@ -66,9 +65,15 @@ static void handle_client(socket_t s, const Config& cfg, Stats& st) {
         uint32_t len = 0;
         net::IoResult r = read_frame_length(s, hdr, len);
         if (r != net::IoResult::Ok) {
-            if (r == net::IoResult::Closed) st.closed_by_client++;
-            else if (r == net::IoResult::Timeout) st.timeouts++;
-            else st.io_errors++;
+            if (r == net::IoResult::Closed) {
+                st.closed_by_client++;
+            } else if (r == net::IoResult::Timeout) {
+                st.timeouts++;
+                if (cfg.verbose) LOG("client idle timeout (%ds) -> close", cfg.idle_timeout_s);
+            } else {
+                st.io_errors++;
+                if (cfg.verbose) LOG("client connection reset while waiting for header");
+            }
             break;
         }
 
@@ -81,12 +86,19 @@ static void handle_client(socket_t s, const Config& cfg, Stats& st) {
         std::memcpy(frame.data(), hdr, sizeof(hdr));
         r = net::recv_all(s, frame.data() + proto::LENGTH_FIELD_SIZE, len);
         if (r != net::IoResult::Ok) {
-            st.io_errors++;
+            if (r == net::IoResult::Timeout) {
+                st.timeouts++;
+                LOG("timeout while reading frame body (expected %u bytes) -> close", len);
+            } else {
+                st.io_errors++;
+                LOG("abnormal disconnect mid-frame (expected %u bytes) -> close", len);
+            }
             break;
         }
 
         if (net::send_all(s, frame.data(), frame.size()) != net::IoResult::Ok) {
             st.io_errors++;
+            if (cfg.verbose) LOG("send error while echoing frame -> close");
             break;
         }
         st.requests++;
@@ -165,7 +177,8 @@ int main(int argc, char** argv) {
     if (::bind(ls, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) return 1;
     if (::listen(ls, SOMAXCONN) != 0) return 1;
 
-    LOG("Echo server listening on %s:%u | threads=%d max_payload=%u", cfg.ip.c_str(), cfg.port, cfg.threads, cfg.max_payload);
+    LOG("Echo server listening on %s:%u | threads=%d max_payload=%u idle_timeout=%ds",
+        cfg.ip.c_str(), cfg.port, cfg.threads, cfg.max_payload, cfg.idle_timeout_s);
 
     Stats st;
     SocketQueue q;
