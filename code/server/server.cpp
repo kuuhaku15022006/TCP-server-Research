@@ -18,9 +18,9 @@
 struct Config {
     std::string ip = "0.0.0.0";
     uint16_t port = 9000;
-    int threads = 128;
+    int threads = 128;                         // kich thuoc thread pool
     uint32_t max_payload = proto::DEFAULT_MAX_PAYLOAD;
-    int idle_timeout_s = 30;
+    int idle_timeout_s = 30;                   // Client im lang qua lau -> dong
     bool verbose = false;
 };
 
@@ -55,6 +55,7 @@ static bool validate_frame_length(uint32_t len, uint32_t max_payload) {
     return true;
 }
 
+// Phuc vu mot ket noi cho toi khi ket thuc. Loi cua ket noi nay KHONG anh huong Server.
 static void handle_client(socket_t s, const Config& cfg, Stats& st) {
     net::set_nodelay(s);
     net::set_recv_timeout(s, cfg.idle_timeout_s * 1000);
@@ -131,6 +132,7 @@ public:
         }
         cv_.notify_all();
     }
+    size_t size() { std::lock_guard<std::mutex> lk(mu_); return q_.size(); }
 private:
     std::mutex mu_;
     std::condition_variable cv_;
@@ -149,15 +151,19 @@ static bool parse_args(int argc, char** argv, Config& c) {
         else if (a == "--max-payload" && (v = next())) c.max_payload = static_cast<uint32_t>(std::atoi(v));
         else if (a == "--idle-timeout" && (v = next())) c.idle_timeout_s = std::atoi(v);
         else if (a == "--verbose") c.verbose = true;
-        else return false;
+        else {
+            std::cerr << "Usage: server [--ip IP] [--port N] [--threads N] [--max-payload BYTES]"
+                         " [--idle-timeout SEC] [--verbose]\n";
+            return false;
+        }
     }
-    return c.threads > 0 && c.port > 0;
+    return c.threads > 0 && c.port > 0 && c.max_payload > 0 && c.idle_timeout_s > 0;
 }
 
 int main(int argc, char** argv) {
     Config cfg;
     if (!parse_args(argc, argv, cfg)) return 1;
-    if (!net::init()) return 1;
+    if (!net::init()) { std::cerr << "Winsock init failed\n"; return 1; }
 
     std::signal(SIGINT, on_signal);
     std::signal(SIGTERM, on_signal);
@@ -166,18 +172,20 @@ int main(int argc, char** argv) {
 #endif
 
     socket_t ls = ::socket(AF_INET, SOCK_STREAM, 0);
-    if (ls == INVALID_SOCK) return 1;
+    if (ls == INVALID_SOCK) { std::perror("socket"); return 1; }
     int one = 1;
     setsockopt(ls, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&one), sizeof(one));
 
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_port = htons(cfg.port);
-    if (inet_pton(AF_INET, cfg.ip.c_str(), &addr.sin_addr) != 1) return 1;
-    if (::bind(ls, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) return 1;
-    if (::listen(ls, SOMAXCONN) != 0) return 1;
+    if (inet_pton(AF_INET, cfg.ip.c_str(), &addr.sin_addr) != 1) {
+        std::cerr << "Invalid IP: " << cfg.ip << "\n"; return 1;
+    }
+    if (::bind(ls, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) { std::perror("bind"); return 1; }
+    if (::listen(ls, SOMAXCONN) != 0) { std::perror("listen"); return 1; }
 
-    LOG("Echo server listening on %s:%u | threads=%d max_payload=%u idle_timeout=%ds",
+    LOG("Echo server listening on %s:%u | model=thread-pool(blocking) threads=%d max_payload=%u idle_timeout=%ds",
         cfg.ip.c_str(), cfg.port, cfg.threads, cfg.max_payload, cfg.idle_timeout_s);
 
     Stats st;
@@ -210,13 +218,30 @@ int main(int argc, char** argv) {
         socklen_t plen = sizeof(peer);
         socket_t cs = ::accept(ls, reinterpret_cast<sockaddr*>(&peer), &plen);
         if (cs == INVALID_SOCK) continue;
+
         st.accepted++;
+        if (cfg.verbose) {
+            char ipbuf[INET_ADDRSTRLEN];
+            inet_ntop(AF_INET, &peer.sin_addr, ipbuf, sizeof(ipbuf));
+            LOG("accepted %s:%u", ipbuf, ntohs(peer.sin_port));
+        }
+        if (st.active.load() >= static_cast<uint64_t>(cfg.threads))
+            LOG("WARNING: all %d workers busy, new connection must wait (raise --threads)", cfg.threads);
         q.push(cs);
     }
 
+    LOG("Shutting down...");
     net::close_socket(ls);
     q.stop();
     for (auto& t : pool) t.join();
+
+    LOG("---- Summary (threads=%d, max_payload=%u, idle_timeout=%ds) ----",
+        cfg.threads, cfg.max_payload, cfg.idle_timeout_s);
+    LOG("accepted=%llu requests=%llu bytes_in=%llu", (unsigned long long)st.accepted, (unsigned long long)st.requests,
+        (unsigned long long)st.bytes_in);
+    LOG("closed_by_client=%llu timeouts=%llu invalid_frames=%llu io_errors=%llu",
+        (unsigned long long)st.closed_by_client, (unsigned long long)st.timeouts,
+        (unsigned long long)st.invalid, (unsigned long long)st.io_errors);
     net::cleanup();
     return 0;
 }
