@@ -1,0 +1,7 @@
+{
+  "server":  { "ip": "127.0.0.1", "port": 9000, "threads": 128, "max_payload": 65536, "idle_timeout_s": 30 },
+  "load":    { "payload_bytes": 1024, "warmup_s": 1, "measure_s": 3, "request_timeout_ms": 5000 },
+  "client_levels": [1, 10, 50],
+  "repeats": 1,
+  "cooldown_s": 1
+}
