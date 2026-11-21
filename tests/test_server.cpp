@@ -1,23 +1,23 @@
-// test_server.cpp - Bộ test Server (vai trò E)
+﻿// test_server.cpp - Bá»™ test Server (vai trĂ² E)
 //
-// Cần một Server đang chạy với:  --max-payload 65536 --idle-timeout 2
-// (tests/run_tests.py tự khởi động Server với đúng tham số này rồi gọi chương trình này.)
+// Cáº§n má»™t Server Ä‘ang cháº¡y vá»›i:  --max-payload 65536 --idle-timeout 2
+// (tests/run_tests.py tá»± khá»Ÿi Ä‘á»™ng Server vá»›i Ä‘Ăºng tham sá»‘ nĂ y rá»“i gá»i chÆ°Æ¡ng trĂ¬nh nĂ y.)
 //
-// Các test:
-//   1  Một Client: echo đúng requestId + payload
-//   2  Frame bị chia nhỏ (7 byte/lần): Server ghép đủ rồi mới trả lời
-//   3  Hai frame dính nhau trong một lần send: Server tách đúng
-//   4  Nhiều Client đồng thời: mỗi Client nhận đúng requestId/payload của mình
-//   5  Payload rỗng (length = 8) và payload lớn nhất (64 KB)
-//   6  Payload vượt giới hạn -> Server đóng kết nối
-//   7  length < 8 -> Server đóng kết nối
-//   8  length khổng lồ (0xFFFFFFFF) -> Server đóng kết nối, không treo/sập
-//   9  Client đóng kết nối giữa chừng một frame
-//   10 Client kết nối rồi đóng ngay (không gửi gì)
-//   11 Idle timeout: Client im lặng bị Server đóng
-//   12 Server vẫn phục vụ bình thường sau tất cả các lỗi trên
+// CĂ¡c test:
+//   1  Má»™t Client: echo Ä‘Ăºng requestId + payload
+//   2  Frame bá»‹ chia nhá» (7 byte/láº§n): Server ghĂ©p Ä‘á»§ rá»“i má»›i tráº£ lá»i
+//   3  Hai frame dĂ­nh nhau trong má»™t láº§n send: Server tĂ¡ch Ä‘Ăºng
+//   4  Nhiá»u Client Ä‘á»“ng thá»i: má»—i Client nháº­n Ä‘Ăºng requestId/payload cá»§a mĂ¬nh
+//   5  Payload rá»—ng (length = 8) vĂ  payload lá»›n nháº¥t (64 KB)
+//   6  Payload vÆ°á»£t giá»›i háº¡n -> Server Ä‘Ă³ng káº¿t ná»‘i
+//   7  length < 8 -> Server Ä‘Ă³ng káº¿t ná»‘i
+//   8  length khá»•ng lá»“ (0xFFFFFFFF) -> Server Ä‘Ă³ng káº¿t ná»‘i, khĂ´ng treo/sáº­p
+//   9  Client Ä‘Ă³ng káº¿t ná»‘i giá»¯a chá»«ng má»™t frame
+//   10 Client káº¿t ná»‘i rá»“i Ä‘Ă³ng ngay (khĂ´ng gá»­i gĂ¬)
+//   11 Idle timeout: Client im láº·ng bá»‹ Server Ä‘Ă³ng
+//   12 Server váº«n phá»¥c vá»¥ bĂ¬nh thÆ°á»ng sau táº¥t cáº£ cĂ¡c lá»—i trĂªn
 //
-// Chạy: ./test_server [--ip 127.0.0.1] [--port 9000] [--max-payload 65536] [--idle-timeout 2]
+// Cháº¡y: ./test_server [--ip 127.0.0.1] [--port 9000] [--max-payload 65536] [--idle-timeout 2]
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -30,8 +30,8 @@
 #include <thread>
 #include <vector>
 
-#include "net.hpp"
-#include "protocol.hpp"
+#include "net.h"
+#include "protocol.h"
 
 static std::string g_ip = "127.0.0.1";
 static uint16_t g_port = 9000;
@@ -53,7 +53,7 @@ static socket_t connect_server(int recv_timeout_ms = 5000) {
     return s;
 }
 
-// Gửi frame hợp lệ, nhận lại, kiểm tra echo
+// Gá»­i frame há»£p lá»‡, nháº­n láº¡i, kiá»ƒm tra echo
 static bool roundtrip(socket_t s, uint64_t rid, size_t payload_len) {
     auto req = proto::encode_frame(rid, payload_len);
     if (net::send_all(s, req.data(), req.size()) != net::IoResult::Ok) return false;
@@ -62,7 +62,7 @@ static bool roundtrip(socket_t s, uint64_t rid, size_t payload_len) {
     return resp == req && proto::verify_frame(resp.data(), resp.size(), rid);
 }
 
-// Server phải đóng kết nối (recv trả 0 hoặc lỗi reset). Timeout nghĩa là Server KHÔNG đóng -> fail.
+// Server pháº£i Ä‘Ă³ng káº¿t ná»‘i (recv tráº£ 0 hoáº·c lá»—i reset). Timeout nghÄ©a lĂ  Server KHĂ”NG Ä‘Ă³ng -> fail.
 static bool server_closes(socket_t s, int wait_ms) {
     net::set_recv_timeout(s, wait_ms);
     uint8_t b;
@@ -142,7 +142,7 @@ static bool t_empty_and_max_payload() {
     if (s == INVALID_SOCK) return false;
     bool ok = roundtrip(s, proto::make_request_id(4, 1), 0) &&
               roundtrip(s, proto::make_request_id(4, 2), g_max_payload) &&
-              roundtrip(s, proto::make_request_id(4, 3), 1);  // vẫn dùng được sau payload lớn nhất
+              roundtrip(s, proto::make_request_id(4, 3), 1);  // váº«n dĂ¹ng Ä‘Æ°á»£c sau payload lá»›n nháº¥t
     net::close_socket(s);
     return ok;
 }
@@ -166,7 +166,7 @@ static bool t_abrupt_close_mid_frame() {
     socket_t s = connect_server();
     if (s == INVALID_SOCK) return false;
     auto req = proto::encode_frame(proto::make_request_id(5, 1), 1024);
-    bool sent = net::send_all(s, req.data(), 100) == net::IoResult::Ok;  // chỉ gửi 100/1036 byte
+    bool sent = net::send_all(s, req.data(), 100) == net::IoResult::Ok;  // chá»‰ gá»­i 100/1036 byte
     net::close_socket(s);
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
     return sent && server_alive();
@@ -240,3 +240,4 @@ int main(int argc, char** argv) {
     net::cleanup();
     return failed == 0 ? 0 : 1;
 }
+

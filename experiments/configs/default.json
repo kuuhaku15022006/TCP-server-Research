@@ -1,7 +1,27 @@
 {
-  "server":  { "ip": "127.0.0.1", "port": 9000, "threads": 128, "max_payload": 65536, "idle_timeout_s": 30 },
-  "load":    { "payload_bytes": 1024, "warmup_s": 5, "measure_s": 20, "request_timeout_ms": 5000 },
-  "client_levels": [1, 10, 50],
-  "repeats": 3,
-  "cooldown_s": 5
+  "server": {
+    "executable": "build/code/server/server.exe",
+    "ip": "0.0.0.0",
+    "port": 9000,
+    "threads": 128,
+    "max_payload": 65536,
+    "idle_timeout": 30
+  },
+  "load_generator": {
+    "executable": "build/code/load-generator/loadgen.exe",
+    "ip": "127.0.0.1",
+    "port": 9000,
+    "payload": 1024,
+    "warmup": 5,
+    "duration": 20,
+    "timeout_ms": 5000
+  },
+  "experiment": {
+    "clients": [1, 10, 50],
+    "repeats": 3,
+    "break_between_runs": 5
+  },
+  "monitor": {
+    "cpu_interval": 1
+  }
 }

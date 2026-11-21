@@ -1,6 +1,11 @@
 add_executable(test_server test_server.cpp)
-target_include_directories(test_server PRIVATE ${CMAKE_SOURCE_DIR}/src/common)
-target_link_libraries(test_server Threads::Threads)
+
+target_include_directories(test_server PRIVATE
+    ${CMAKE_SOURCE_DIR}/code/common
+)
+
+target_link_libraries(test_server PRIVATE Threads::Threads)
+
 if(WIN32)
-  target_link_libraries(test_server ws2_32)
+    target_link_libraries(test_server PRIVATE ws2_32)
 endif()
