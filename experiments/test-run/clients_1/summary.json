@@ -1,0 +1,8 @@
+{
+  "clients": 1, "payload_bytes": 1024, "warmup_s": 5, "measure_s": 20,
+  "requests_ok": 0,
+  "errors": {"timeout": 0, "mismatch": 0, "conn_error": 9},
+  "error_rate": 1.000000,
+  "throughput_rps": 0.000,
+  "latency_us": {"mean": 0.000, "p95": 0.000, "min": 0, "max": 0}
+}

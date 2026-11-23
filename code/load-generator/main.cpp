@@ -1,16 +1,16 @@
-// main.cpp - LOAD GENERATOR cho Echo Benchmark (vai trò C)
+﻿// main.cpp - LOAD GENERATOR cho Echo Benchmark (vai trĂ² C)
 //
-// Hành vi (xem docs/DESIGN-DECISIONS.md mục 3-6):
-//   - N Client logic, mỗi Client = 1 thread + 1 kết nối TCP riêng (blocking).
-//   - Closed-loop: gửi 1 request, chờ đủ response, gửi tiếp ngay.
-//   - Tạo đủ N kết nối trước, rồi tất cả bắt đầu cùng lúc tại t0 (in dòng "START" ra stdout).
-//   - Warm-up [t0, t0+warmup) bỏ khỏi thống kê; đo chính thức [t0+warmup, t0+warmup+duration).
-//   - Request được tính nếu THỜI ĐIỂM GỬI nằm trong cửa sổ đo.
-//   - Latency = từ ngay trước send đến khi nhận đủ frame response (µs, steady_clock).
-//   - Timeout / sai requestId-payload / lỗi kết nối = 1 lỗi; sau lỗi đóng và mở lại kết nối.
-//   - Ghi requests.csv và summary.json vào --out-dir.
+// HĂ nh vi (xem docs/DESIGN-DECISIONS.md má»¥c 3-6):
+//   - N Client logic, má»—i Client = 1 thread + 1 káº¿t ná»‘i TCP riĂªng (blocking).
+//   - Closed-loop: gá»­i 1 request, chá» Ä‘á»§ response, gá»­i tiáº¿p ngay.
+//   - Táº¡o Ä‘á»§ N káº¿t ná»‘i trÆ°á»›c, rá»“i táº¥t cáº£ báº¯t Ä‘áº§u cĂ¹ng lĂºc táº¡i t0 (in dĂ²ng "START" ra stdout).
+//   - Warm-up [t0, t0+warmup) bá» khá»i thá»‘ng kĂª; Ä‘o chĂ­nh thá»©c [t0+warmup, t0+warmup+duration).
+//   - Request Ä‘Æ°á»£c tĂ­nh náº¿u THá»œI ÄIá»‚M Gá»¬I náº±m trong cá»­a sá»• Ä‘o.
+//   - Latency = tá»« ngay trÆ°á»›c send Ä‘áº¿n khi nháº­n Ä‘á»§ frame response (Âµs, steady_clock).
+//   - Timeout / sai requestId-payload / lá»—i káº¿t ná»‘i = 1 lá»—i; sau lá»—i Ä‘Ă³ng vĂ  má»Ÿ láº¡i káº¿t ná»‘i.
+//   - Ghi requests.csv vĂ  summary.json vĂ o --out-dir.
 //
-// Chạy: ./loadgen --ip 127.0.0.1 --port 9000 --clients 10 --warmup 5 --duration 20 --out-dir <dir>
+// Cháº¡y: ./loadgen --ip 127.0.0.1 --port 9000 --clients 10 --warmup 5 --duration 20 --out-dir <dir>
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -58,12 +58,12 @@ static const char* status_str(Status s) {
 struct Record {
     uint32_t client_id;
     uint64_t request_id;
-    int64_t send_us;     // tính từ t0
-    int64_t latency_us;  // -1 nếu không phải ok
+    int64_t send_us;     // tĂ­nh tá»« t0
+    int64_t latency_us;  // -1 náº¿u khĂ´ng pháº£i ok
     Status status;
 };
 
-// Đồng bộ khởi động giữa các Client
+// Äá»“ng bá»™ khá»Ÿi Ä‘á»™ng giá»¯a cĂ¡c Client
 struct Barrier {
     std::mutex mu;
     std::condition_variable cv;
@@ -88,7 +88,7 @@ static socket_t try_connect(const Config& cfg) {
     return s;
 }
 
-// Gửi 1 request, nhận đủ 1 response, kiểm tra. Trả về Status.
+// Gá»­i 1 request, nháº­n Ä‘á»§ 1 response, kiá»ƒm tra. Tráº£ vá» Status.
 static Status do_request(socket_t s, const std::vector<uint8_t>& req, std::vector<uint8_t>& resp, uint64_t rid) {
     if (net::send_all(s, req.data(), req.size()) != net::IoResult::Ok) return Status::ConnError;
 
@@ -98,7 +98,7 @@ static Status do_request(socket_t s, const std::vector<uint8_t>& req, std::vecto
     if (r != net::IoResult::Ok) return Status::ConnError;
 
     uint32_t len = proto::get_u32(hdr);
-    // Response phải dài đúng bằng request (echo); sai thì không đọc tiếp (tránh đọc length bậy)
+    // Response pháº£i dĂ i Ä‘Ăºng báº±ng request (echo); sai thĂ¬ khĂ´ng Ä‘á»c tiáº¿p (trĂ¡nh Ä‘á»c length báº­y)
     if (len != req.size() - proto::LENGTH_FIELD_SIZE) return Status::Mismatch;
 
     resp.resize(proto::LENGTH_FIELD_SIZE + len);
@@ -111,14 +111,14 @@ static Status do_request(socket_t s, const std::vector<uint8_t>& req, std::vecto
 }
 
 static void client_thread(uint32_t client_id, const Config& cfg, Barrier& bar, std::vector<Record>& out) {
-    // 1) Kết nối trước (thử lại tối đa ~3 giây)
+    // 1) Káº¿t ná»‘i trÆ°á»›c (thá»­ láº¡i tá»‘i Ä‘a ~3 giĂ¢y)
     socket_t s = INVALID_SOCK;
     for (int i = 0; i < 30 && s == INVALID_SOCK; ++i) {
         s = try_connect(cfg);
         if (s == INVALID_SOCK) std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 
-    // 2) Chờ tất cả Client sẵn sàng rồi cùng bắt đầu
+    // 2) Chá» táº¥t cáº£ Client sáºµn sĂ ng rá»“i cĂ¹ng báº¯t Ä‘áº§u
     Clock::time_point t0;
     {
         std::unique_lock<std::mutex> lk(bar.mu);
@@ -139,7 +139,7 @@ static void client_thread(uint32_t client_id, const Config& cfg, Barrier& bar, s
         auto now = Clock::now();
         if (now >= win_end) break;
 
-        // Mất kết nối thì mở lại (đếm là 1 lỗi conn_error nếu rơi vào cửa sổ đo)
+        // Máº¥t káº¿t ná»‘i thĂ¬ má»Ÿ láº¡i (Ä‘áº¿m lĂ  1 lá»—i conn_error náº¿u rÆ¡i vĂ o cá»­a sá»• Ä‘o)
         if (s == INVALID_SOCK) {
             s = try_connect(cfg);
             if (s == INVALID_SOCK) {
@@ -169,7 +169,7 @@ static void client_thread(uint32_t client_id, const Config& cfg, Barrier& bar, s
             rec.status = st;
             out.push_back(rec);
         }
-        if (st != Status::Ok) {  // luồng byte có thể lệch -> bỏ kết nối này, mở lại ở vòng sau
+        if (st != Status::Ok) {  // luá»“ng byte cĂ³ thá»ƒ lá»‡ch -> bá» káº¿t ná»‘i nĂ y, má»Ÿ láº¡i á»Ÿ vĂ²ng sau
             net::close_socket(s);
             s = INVALID_SOCK;
         }
@@ -219,7 +219,7 @@ int main(int argc, char** argv) {
     for (int i = 0; i < cfg.clients; ++i)
         threads.emplace_back(client_thread, static_cast<uint32_t>(i + 1), std::cref(cfg), std::ref(bar), std::ref(per_client[i]));
 
-    {   // Chờ đủ N Client sẵn sàng rồi phát lệnh bắt đầu
+    {   // Chá» Ä‘á»§ N Client sáºµn sĂ ng rá»“i phĂ¡t lá»‡nh báº¯t Ä‘áº§u
         std::unique_lock<std::mutex> lk(bar.mu);
         bar.cv.wait(lk, [&] { return bar.ready == cfg.clients; });
         bar.t0 = Clock::now();
@@ -231,7 +231,7 @@ int main(int argc, char** argv) {
 
     for (auto& t : threads) t.join();
 
-    // ---- Thống kê ----
+    // ---- Thá»‘ng kĂª ----
     uint64_t n_ok = 0, n_timeout = 0, n_mismatch = 0, n_conn = 0;
     std::vector<int64_t> lat;
     for (auto& v : per_client)
@@ -306,3 +306,4 @@ int main(int argc, char** argv) {
     net::cleanup();
     return 0;
 }
+

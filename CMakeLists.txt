@@ -1,11 +1,16 @@
 cmake_minimum_required(VERSION 3.10)
+
 project(tcp_client_load_research CXX)
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
 if(NOT CMAKE_BUILD_TYPE)
-  set(CMAKE_BUILD_TYPE Release)
+    set(CMAKE_BUILD_TYPE Release)
 endif()
+
 find_package(Threads REQUIRED)
-add_subdirectory(src/server)
-add_subdirectory(src/load-generator)
+
+add_subdirectory(code/server)
+add_subdirectory(code/load-generator)
 add_subdirectory(tests)
