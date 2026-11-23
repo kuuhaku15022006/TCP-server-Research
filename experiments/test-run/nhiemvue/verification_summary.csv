@@ -1,0 +1,4 @@
+﻿Truong_hop,File_du_lieu,So_client,Tong_request,Request_thanh_cong,Request_loi,Throughput_req_s,Error_rate_percent
+1 Client,requests.csv,1,220012,220012,0,44002.4,0.0
+10 Client,requests(1).csv,10,1095200,1095200,0,219040.0,0.0
+20 Client,requests(2).csv,20,1073056,1073056,0,214611.2,0.0
